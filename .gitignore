@@ -1,0 +1,6 @@
+node_modules/
+.env
+.env.local
+supabase/dumps/backup-config.json
+*.log
+.DS_Store
