@@ -178,43 +178,80 @@ class SupabaseBackupCLI {
     console.log(`원본 URL: ${cloudConfig.url}`);
     
     if (dbUrl.includes('[YOUR-PASSWORD]')) {
-      dbUrl = dbUrl.replace('[YOUR-PASSWORD]', cloudConfig.password);
-      console.log('✓ [YOUR-PASSWORD] 플레이스홀더를 실제 비밀번호로 교체');
-    } else if (!dbUrl.includes(':' + cloudConfig.password + '@')) {
-      dbUrl = dbUrl.replace('postgres.', `postgres:${cloudConfig.password}@postgres.`);
-      console.log('✓ URL에 비밀번호 추가');
+      // 비밀번호를 URL 인코딩
+      const encodedPassword = encodeURIComponent(cloudConfig.password);
+      dbUrl = dbUrl.replace('[YOUR-PASSWORD]', encodedPassword);
+      console.log('✓ [YOUR-PASSWORD] 플레이스홀더를 실제 비밀번호로 교체 (URL 인코딩 적용)');
+    } else if (!dbUrl.includes(':' + cloudConfig.password + '@') && !dbUrl.includes(':' + encodeURIComponent(cloudConfig.password) + '@')) {
+      const encodedPassword = encodeURIComponent(cloudConfig.password);
+      dbUrl = dbUrl.replace('postgres.', `postgres:${encodedPassword}@postgres.`);
+      console.log('✓ URL에 비밀번호 추가 (URL 인코딩 적용)');
     } else {
       console.log('✓ URL에 이미 비밀번호가 포함됨');
     }
     
-    console.log(`처리된 URL: ${dbUrl.replace(cloudConfig.password, '*****')}`);
+    console.log(`처리된 URL: ${dbUrl.replace(encodeURIComponent(cloudConfig.password), '*****').replace(cloudConfig.password, '*****')}`);
     
     try {
-      // 환경변수 설정
+      // 환경변수 설정 (특수문자 처리를 위해)
       const env = {
         ...process.env,
-        DB_URL: dbUrl
+        DB_URL: dbUrl,
+        SUPABASE_DB_URL: dbUrl
       };
       
-      // 1. 역할 백업 (Supabase CLI 사용)
+      // 1. 역할 백업 (로컬 pg_dumpall 사용)
       console.log(chalk.yellow('\n1/4: 역할 백업 중...'));
-      await CommandRunner.run('npx', ['supabase', 'db', 'dump', '--db-url', dbUrl, '--role-only', '-f', `${backupDir}/roles.sql`], { env });
+      const urlObj = new URL(dbUrl);
+      const pgEnv = {
+        ...process.env,
+        PGPASSWORD: urlObj.password
+      };
+      
+      await CommandRunner.run('pg_dumpall', [
+        '-h', urlObj.hostname,
+        '-p', urlObj.port || '5432',
+        '-U', urlObj.username,
+        '--roles-only',
+        '-f', `${backupDir}/roles.sql`
+      ], { env: pgEnv });
       console.log(chalk.green('✓ 역할 백업 완료'));
       
-      // 2. 스키마 백업 (Supabase CLI 사용)
+      // 2. 스키마 백업 (로컬 pg_dump 사용)
       console.log(chalk.yellow('\n2/4: 스키마 백업 중...'));
-      await CommandRunner.run('npx', ['supabase', 'db', 'dump', '--db-url', dbUrl, '-f', `${backupDir}/schema.sql`], { env });
+      await CommandRunner.run('pg_dump', [
+        '-h', urlObj.hostname,
+        '-p', urlObj.port || '5432',
+        '-U', urlObj.username,
+        '-d', urlObj.pathname.slice(1), // '/' 제거
+        '--schema-only',
+        '-f', `${backupDir}/schema.sql`
+      ], { env: pgEnv });
       console.log(chalk.green('✓ 스키마 백업 완료'));
       
-      // 3. 데이터 백업 (Supabase CLI 사용)
+      // 3. 데이터 백업 (로컬 pg_dump 사용)
       console.log(chalk.yellow('\n3/4: 데이터 백업 중...'));
       console.log(chalk.cyan('  ⏳ 대용량 데이터의 경우 시간이 오래 걸릴 수 있습니다...'));
-      await CommandRunner.run('npx', ['supabase', 'db', 'dump', '--db-url', dbUrl, '--data-only', '-f', `${backupDir}/data.sql`], { env });
+      await CommandRunner.run('pg_dump', [
+        '-h', urlObj.hostname,
+        '-p', urlObj.port || '5432',
+        '-U', urlObj.username,
+        '-d', urlObj.pathname.slice(1), // '/' 제거
+        '--data-only',
+        '-f', `${backupDir}/data.sql`
+      ], { env: pgEnv });
       console.log(chalk.green('✓ 데이터 백업 완료'));
       
-      // 4. Storage 정책 백업 (Supabase CLI 사용)
+      // 4. Storage 정책 백업 (로컬 pg_dump 사용)
       console.log(chalk.yellow('\n4/4: Storage 정책 백업 중...'));
-      await CommandRunner.run('npx', ['supabase', 'db', 'dump', '--db-url', dbUrl, '-f', `${backupDir}/storage-policies.sql`, '--schema', 'storage'], { env });
+      await CommandRunner.run('pg_dump', [
+        '-h', urlObj.hostname,
+        '-p', urlObj.port || '5432',
+        '-U', urlObj.username,
+        '-d', urlObj.pathname.slice(1), // '/' 제거
+        '--schema=storage',
+        '-f', `${backupDir}/storage-policies.sql`
+      ], { env: pgEnv });
       console.log(chalk.green('✓ Storage 정책 백업 완료'));
       
       console.log(chalk.green(`\n🎉 클라우드 백업 완료: ${backupDir}`));

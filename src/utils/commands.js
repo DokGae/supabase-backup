@@ -4,12 +4,20 @@ const chalk = require('chalk');
 class CommandRunner {
   static async run(command, args = [], options = {}) {
     return new Promise((resolve, reject) => {
-      console.log(`\n실행 중: ${command} ${args.join(' ')}`);
+      // DB URL이 포함된 경우 민감한 정보 숨기기
+      const displayArgs = args.map(arg => {
+        if (arg.includes('postgresql://') && arg.includes('@')) {
+          return arg.replace(/:([^@]+)@/, ':*****@');
+        }
+        return arg;
+      });
+      console.log(`\n실행 중: ${command} ${displayArgs.join(' ')}`);
       
       const childProcess = spawn(command, args, {
         stdio: options.stdio || ['inherit', 'pipe', 'pipe'],
         env: options.env || process.env,
-        cwd: options.cwd || process.cwd()
+        cwd: options.cwd || process.cwd(),
+        shell: false // 직접 실행하여 shell 해석 방지
       });
 
       let stdout = '';
